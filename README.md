@@ -1,12 +1,12 @@
 ```javascript
 /*
- * Severin Incompatipatch — self-booting Eruda host
+ * Servo Incompatipatch — self-booting Eruda host
  * v0.2 + field addendums
  *
  * A page only needs:
  *   <script src="./incompatipatch-eruda.js"></script>
  *
- * This file turns a stock local Eruda bundle into a Servo/Severin-friendly
+ * This file turns a stock local Eruda bundle into a Servo-friendly
  * local dev console. It owns the complete lifecycle:
  *
  *   1. preflight
@@ -80,8 +80,6 @@
  *     declarations may be ignored by current Servo builds.
  *   - native <select> and <input type="range"> behavior is supplied here
  *     as a temporary JavaScript prosthetic, not considered permanently fixed.
- *   - Eruda's Network tab has little purpose in Severin's local/no-network
- *     runtime model.
  *   - malformed table-like HTML may trigger html5ever's current
  *     "foster parenting not implemented" warning.
  *
