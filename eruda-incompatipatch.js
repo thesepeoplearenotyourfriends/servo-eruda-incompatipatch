@@ -1,12 +1,12 @@
 /*
- * Severin support bundle — Incompatipatch core + Eruda channel
+ * Servo support bundle — Incompatipatch core + Eruda channel
  * v0.3 + field addendums
  *
  * A page still needs only:
  *   <script src="./incompatipatch-eruda.js"></script>
  *
  * This remains one file because a stock local Eruda is not presently useful
- * in Severin without its compatibility work. Internally, however, it is two
+ * in Servo without its compatibility work. Internally, however, it is two
  * deliberately separate channels:
  *
  *   1. INCOMPATIPATCH CORE
@@ -31,7 +31,7 @@
  *          .closeMenus()
  *
  * Boundary rule:
- *   Put a repair in Incompatipatch only when it describes Severin's document
+ *   Put a repair in Incompatipatch only when it describes Servo's document
  *   runtime independently of Eruda. Put a repair in the Eruda channel when
  *   it touches #eruda, window.eruda, Eruda/Licia behavior, or an Eruda-owned
  *   control. Do not make an Eruda defect look like a general engine feature.
@@ -75,7 +75,7 @@
  *     declarations may be ignored by current Servo builds.
  *   - native <select> and <input type="range"> behavior is supplied in the
  *     Eruda channel as a temporary JavaScript prosthetic.
- *   - Eruda's Network tab has little purpose in Severin's local/no-network
+ *   - Eruda's Network tab has little purpose in Servo's local/no-network
  *     runtime model.
  *   - malformed table-like HTML may trigger html5ever's current
  *     "foster parenting not implemented" warning.
