@@ -1,75 +1,70 @@
-
 /*
- * Severin Incompatipatch — self-booting Eruda host
- * v0.2 + field addendums
+ * Severin support bundle — Incompatipatch core + Eruda channel
+ * v0.3 + field addendums
  *
- * A page only needs:
+ * A page still needs only:
  *   <script src="./incompatipatch-eruda.js"></script>
  *
- * This file turns a stock local Eruda bundle into a Servo/Severin-friendly
- * local dev console. It owns the complete lifecycle:
+ * This remains one file because a stock local Eruda is not presently useful
+ * in Severin without its compatibility work. Internally, however, it is two
+ * deliberately separate channels:
  *
- *   1. preflight
- *      - tests localStorage/sessionStorage
- *      - installs enumerable RAM Storage fallbacks only when opaque
- *        file: origins cause native storage to throw
+ *   1. INCOMPATIPATCH CORE
+ *      Generic document-runtime compatibility, meaningful even without Eruda.
+ *      Today this is the opaque-file-origin Storage preflight.
  *
- *   2. load
- *      - dynamically loads CONFIG.eruda_source
- *      - starts Eruda with configured theme and display size
- *      - keeps the page-side installation to one script tag
+ *      Public surface:
+ *        window.SevrinIncompatipatch
+ *          .preflight()
+ *          .storage
  *
- *   3. postflight
- *      - repairs Eruda's unsupported `pointer-events: all` usage
- *      - watches later-created Eruda UI with MutationObserver
- *      - installs control and console compatibility addendums
+ *   2. ERUDA CHANNEL
+ *      Eruda loading, initialization, Eruda-only DOM/CSS prosthetics, and
+ *      Eruda-specific addendums. It is the only channel allowed to know
+ *      Eruda class names, internals, or quirks.
  *
- * Included incompatipatches
- * ------------------------
+ *      Public surface:
+ *        window.SevrinEruda
+ *          .config
+ *          .boot()
+ *          .refresh()
+ *          .closeMenus()
  *
- * IP-001 — native control fallbacks
- *   - replaces dead <input type="range"> behavior with a custom DOM slider
- *   - supports click, drag, keyboard stepping, Home/End, PageUp/PageDown
- *   - writes back to the original input and emits normal input/change events
- *   - replaces dead single-select popups with a custom DOM listbox
- *   - preserves the original select.value / selectedIndex contract
- *   - dispatches normal input/change events for existing Eruda listeners
+ * Boundary rule:
+ *   Put a repair in Incompatipatch only when it describes Severin's document
+ *   runtime independently of Eruda. Put a repair in the Eruda channel when
+ *   it touches #eruda, window.eruda, Eruda/Licia behavior, or an Eruda-owned
+ *   control. Do not make an Eruda defect look like a general engine feature.
+ *
+ * ERUDA CHANNEL CONTENTS
+ * ----------------------
+ *
+ * ER-001 — native control fallbacks
+ *   - replaces dead Eruda <input type="range"> behavior with a custom DOM
+ *     slider, including click, drag, keyboard stepping, Home/End, and pages
+ *   - replaces dead Eruda single-select popups with a custom DOM listbox
+ *   - preserves input/select values and dispatches normal input/change events
  *   - opens select menus upward when lower viewport space is insufficient
- *   - optionally marks patched controls with red diagnostic outlines
  *
- * IP-002 — console execution ergonomics
+ * ER-002 — console execution ergonomics
  *   - Ctrl+Enter / Cmd+Enter triggers Eruda's real Execute path
- *   - avoids dependence on Eruda's hidden/broken native action rail
  *
- * IP-003 — Storage inspector bridge
- *   - works around Eruda Resources using JSON.stringify(storage)
- *   - enumerates native Servo Storage honestly through:
+ * ER-003 — Storage inspector bridge
+ *   - replaces Eruda Resources' broken Storage JSON enumeration with:
  *       storage.length → storage.key(i) → storage.getItem(key)
- *   - makes ordinary app keys visible in Resources / Local Storage
  *   - can optionally reveal Eruda's own hidden eruda-* settings keys
  *
- * IP-004 — console history and completion
+ * ER-004 — console history and completion
  *   - ArrowUp / ArrowDown session command history at textarea edges
- *   - preserves ordinary multiline arrow behavior away from those edges
- *   - Tab completion for safe identifier/property chains
- *   - Shift+Tab cycles candidates backward
- *   - completion avoids eval: no calls, operators, bracket expressions,
- *     or arbitrary source execution
+ *   - Tab completion for safe identifier/property chains, without eval
  *
- * IP-005 — selected-log copy shortcut
- *   - Ctrl+C / Cmd+C activates Eruda's enabled Copy control when a
- *     structured console log is selected
- *   - never steals normal copy from textarea, input, contenteditable,
- *     or an ordinary document text selection
+ * ER-005 — selected-log copy shortcut
+ *   - Ctrl+C / Cmd+C activates Eruda's enabled Copy control for a selected log
+ *   - never steals normal copy from editable controls or real text selection
  *
- * IP-006 — legacy copy to modern clipboard bridge
- *   - Eruda/Licia uses document.execCommand("copy")
- *   - Servo reports legacy copy unsupported even though modern Clipboard API
- *     exists and navigator.clipboard.writeText() works
- *   - intercepts legacy copy only
- *   - reads Eruda/Licia's temporary offscreen copy textarea
- *   - routes its actual text through navigator.clipboard.writeText()
- *   - restores working toolbar Copy and selected-log Ctrl+C copying
+ * ER-006 — legacy copy to modern clipboard bridge
+ *   - routes Eruda/Licia's known temporary-copy payload through
+ *     navigator.clipboard.writeText(), leaving unrelated page copy native
  *
  * Known engine gaps still visible
  * -------------------------------
@@ -78,8 +73,8 @@
  *     rendered console text remains an engine issue.
  *   - text-overflow, resize, appearance, forced-colors and related CSS
  *     declarations may be ignored by current Servo builds.
- *   - native <select> and <input type="range"> behavior is supplied here
- *     as a temporary JavaScript prosthetic, not considered permanently fixed.
+ *   - native <select> and <input type="range"> behavior is supplied in the
+ *     Eruda channel as a temporary JavaScript prosthetic.
  *   - Eruda's Network tab has little purpose in Severin's local/no-network
  *     runtime model.
  *   - malformed table-like HTML may trigger html5ever's current
@@ -90,13 +85,13 @@
 (function (global, document) {
   'use strict';
 
-  if (global.SevrinIncompatipatch) return;
+  if (global.SevrinIncompatipatch || global.SevrinEruda) return;
 
   /* ------------------------------------------------------------
-   * CONFIG — edit this small block, not the machinery below.
+   * ERUDA CHANNEL CONFIG — edit this small block, not machinery.
    * ---------------------------------------------------------- */
-  var CONFIG = {
-    eruda_source: './eruda.js',
+  var ERUDA_CONFIG = {
+    eruda_source: '/mnt/library/servo/servo/eruda.js',
     theme: 'dark',
     display_size: '52',
     console_history_max: 150,
@@ -120,8 +115,21 @@
     patch_ctrl_enter: true
   };
 
-  var state = {
-    config: CONFIG,
+  /*
+   * Keep state physically separated too. The core must not quietly grow
+   * Eruda UI state, and the Eruda channel must not own generic runtime state.
+   */
+  var incompatipatchState = {
+    storage: {
+      local: null,
+      session: null,
+      localInstalled: false,
+      sessionInstalled: false
+    }
+  };
+
+  var erudaState = {
+    config: ERUDA_CONFIG,
     booted: false,
     initialized: false,
     styleInstalled: false,
@@ -129,13 +137,7 @@
     scanQueued: false,
     openMenu: null,
     patchedRanges: [],
-    patchedSelects: [],
-    storage: {
-      local: null,
-      session: null,
-      localInstalled: false,
-      sessionInstalled: false
-    }
+    patchedSelects: []
   };
 
   function own(object, key) {
@@ -195,19 +197,19 @@
   }
 
   function debugMark(node, message) {
-    if (!state.config.debug_marks) return;
+    if (!erudaState.config.debug_marks) return;
 
     node.title = node.title
       ? node.title + '\n' + message
       : message;
 
-    node.setAttribute('data-sevrin-incompatipatch', message);
+    node.setAttribute('data-sevrin-eruda-fallback', message);
     node.style.outline = '1px solid #ff7373';
     node.style.outlineOffset = '1px';
   }
 
   /* ------------------------------------------------------------
-   * PREFLIGHT: enumerable in-memory Storage.
+   * INCOMPATIPATCH CORE: opaque-origin Storage preflight.
    *
    * Eruda's Resources pane runs JSON.stringify(storage), so a
    * closure-only map is invisible to it. This object mirrors each
@@ -369,11 +371,11 @@
 
     if (installed) {
       if (name === 'localStorage') {
-        state.storage.local = storage;
-        state.storage.localInstalled = true;
+        incompatipatchState.storage.local = storage;
+        incompatipatchState.storage.localInstalled = true;
       } else {
-        state.storage.session = storage;
-        state.storage.sessionInstalled = true;
+        incompatipatchState.storage.session = storage;
+        incompatipatchState.storage.sessionInstalled = true;
       }
     }
 
@@ -386,7 +388,7 @@
   }
 
   /* ------------------------------------------------------------
-   * LOADER + ERUDA INITIALIZATION.
+   * ERUDA CHANNEL: loader + initialization.
    * ---------------------------------------------------------- */
   function normalizedTheme(theme) {
     theme = String(theme || 'dark').trim();
@@ -397,26 +399,26 @@
   }
 
   function startEruda() {
-    if (state.initialized) return;
+    if (erudaState.initialized) return;
 
     if (!global.eruda || typeof global.eruda.init !== 'function') {
       console.error(
-        '[Incompatipatch] Eruda loaded but window.eruda.init is unavailable.'
+        '[Sevrin Eruda] loaded but window.eruda.init is unavailable.'
       );
       return;
     }
 
     global.eruda.init({
-      useShadowDom: !!state.config.use_shadow_dom,
-      autoScale: !!state.config.auto_scale,
+      useShadowDom: !!erudaState.config.use_shadow_dom,
+      autoScale: !!erudaState.config.auto_scale,
 
       defaults: {
-        theme: normalizedTheme(state.config.theme),
-        displaySize: String(state.config.display_size)
+        theme: normalizedTheme(erudaState.config.theme),
+        displaySize: String(erudaState.config.display_size)
       }
     });
 
-    state.initialized = true;
+    erudaState.initialized = true;
     postflight();
   }
 
@@ -428,20 +430,20 @@
 
     var script = document.createElement('script');
 
-    script.src = state.config.eruda_source;
+    script.src = erudaState.config.eruda_source;
     script.async = false;
 
     script.setAttribute(
       'data-sevrin-eruda-source',
-      state.config.eruda_source
+      erudaState.config.eruda_source
     );
 
     script.onload = startEruda;
 
     script.onerror = function () {
       console.error(
-        '[Incompatipatch] Could not load Eruda from:',
-        state.config.eruda_source
+        '[Sevrin Eruda] could not load Eruda from:',
+        erudaState.config.eruda_source
       );
     };
 
@@ -449,24 +451,27 @@
   }
 
   function boot() {
-    if (state.booted) return;
+    if (erudaState.booted) return;
 
-    state.booted = true;
+    erudaState.booted = true;
 
     preflight();
     loadEruda();
   }
 
   /* ------------------------------------------------------------
-   * POSTFLIGHT: CSS and control prosthetics.
+   * ERUDA CHANNEL: UI compatibility and control prosthetics.
+   *
+   * Everything below is deliberately scoped to #eruda. A page's own
+   * controls must never be rewritten merely because this bundle is present.
    * ---------------------------------------------------------- */
   function installErudaCssRepair() {
-    if (state.styleInstalled) return;
+    if (erudaState.styleInstalled) return;
 
     var style = document.createElement('style');
 
     style.setAttribute(
-      'data-sevrin-incompatipatch-css',
+      'data-sevrin-eruda-fallback-css',
       'true'
     );
 
@@ -478,12 +483,34 @@
       '/* Keep fallback controls legible inside dark Eruda panels. */',
       '.sevrin-range-patch, .sevrin-select-patch {',
       '  font: 12px ui-monospace, SFMono-Regular, Consolas, monospace;',
+      '}',
+      '',
+      '/*',
+      ' * Range prosthetics borrow the surrounding page color by default.',
+      ' * debugMark() keeps the thin red outline as the “Eruda fallback” tell.',
+      ' */',
+      '.sevrin-range-patch .sevrin-range-track {',
+      '  border-color: var(--sevrin-range-track-border, currentColor) !important;',
+      '  background-color: var(--sevrin-range-track-bg, transparent) !important;',
+      '  border-radius: 999px;',
+      '}',
+      '',
+      '.sevrin-range-patch .sevrin-range-fill {',
+      '  background-color: var(--sevrin-range-fill, currentColor) !important;',
+      '  opacity: var(--sevrin-range-fill-opacity, 0.72);',
+      '  border-radius: inherit;',
+      '}',
+      '',
+      '.sevrin-range-patch .sevrin-range-thumb {',
+      '  border-color: var(--sevrin-range-thumb-border, currentColor) !important;',
+      '  background-color: var(--sevrin-range-thumb-bg, transparent) !important;',
+      '  border-radius: 50%;',
       '}'
     ].join('\n');
 
     (document.head || document.documentElement).appendChild(style);
 
-    state.styleInstalled = true;
+    erudaState.styleInstalled = true;
   }
 
   function hideOriginalControl(node) {
@@ -604,6 +631,8 @@
       pointerEvents: 'auto'
     });
 
+    track.className = 'sevrin-range-track';
+
     var fill = make('span', null, {
       position: 'absolute',
       left: '0',
@@ -613,6 +642,8 @@
       backgroundColor: '#d9ff59',
       pointerEvents: 'none'
     });
+
+    fill.className = 'sevrin-range-fill';
 
     var thumb = make('span', null, {
       position: 'absolute',
@@ -627,6 +658,8 @@
       backgroundColor: '#202828',
       pointerEvents: 'none'
     });
+
+    thumb.className = 'sevrin-range-thumb';
 
     track.appendChild(fill);
     track.appendChild(thumb);
@@ -826,21 +859,21 @@
     input.addEventListener('change', sync);
 
     wrapper.addEventListener('focus', function () {
-      track.style.borderColor = '#d9ff59';
+      track.style.boxShadow = '0 0 0 1px currentColor';
     });
 
     wrapper.addEventListener('blur', function () {
-      track.style.borderColor = '#4d5959';
+      track.style.boxShadow = '';
     });
 
     debugMark(
       wrapper,
-      'Sevrin fallback: native range default action unavailable'
+      'Eruda fallback: native range default action unavailable'
     );
 
     sync();
 
-    state.patchedRanges.push({
+    erudaState.patchedRanges.push({
       input: input,
       wrapper: wrapper,
       sync: sync
@@ -851,10 +884,10 @@
    * SELECT FALLBACK.
    * ---------------------------------------------------------- */
   function closeOpenMenu() {
-    if (!state.openMenu) return;
+    if (!erudaState.openMenu) return;
 
-    state.openMenu.close();
-    state.openMenu = null;
+    erudaState.openMenu.close();
+    erudaState.openMenu = null;
   }
 
   function patchSelect(select) {
@@ -876,7 +909,7 @@
 
       debugMark(
         select,
-        'Sevrin warning: multi-select fallback not installed'
+        'Eruda warning: multi-select fallback not installed'
       );
 
       return;
@@ -993,8 +1026,8 @@
       if (select.disabled) return;
 
       if (
-        state.openMenu &&
-        state.openMenu.owner === select
+        erudaState.openMenu &&
+        erudaState.openMenu.owner === select
       ) {
         closeOpenMenu();
         return;
@@ -1142,14 +1175,14 @@
         button.setAttribute('aria-expanded', 'false');
 
         if (
-          state.openMenu &&
-          state.openMenu.owner === select
+          erudaState.openMenu &&
+          erudaState.openMenu.owner === select
         ) {
-          state.openMenu = null;
+          erudaState.openMenu = null;
         }
       }
 
-      state.openMenu = {
+      erudaState.openMenu = {
         owner: select,
         close: close
       };
@@ -1207,12 +1240,12 @@
 
     debugMark(
       wrapper,
-      'Sevrin fallback: native select popup unavailable'
+      'Eruda fallback: native select popup unavailable'
     );
 
     sync();
 
-    state.patchedSelects.push({
+    erudaState.patchedSelects.push({
       select: select,
       wrapper: wrapper,
       sync: sync
@@ -1223,9 +1256,9 @@
    * CTRL+ENTER: use Eruda's own hidden Execute handler.
    * ---------------------------------------------------------- */
   function patchErudaCtrlEnter(root) {
-    if (!state.config.patch_ctrl_enter) return;
+    if (!erudaState.config.patch_ctrl_enter) return;
 
-    var textareas = candidates(
+    var textareas = erudaCandidates(
       root,
       '.eruda-js-input textarea'
     );
@@ -1303,11 +1336,37 @@
     return result;
   }
 
+  function erudaCandidates(root, selector) {
+    var host = document.getElementById('eruda');
+
+    if (!host) return [];
+
+    /*
+     * Initial scans use document. Mutation scans use only a new node inside
+     * #eruda. An unrelated page mutation is not a reason to revisit Eruda,
+     * and—more importantly—must never cause page controls to be patched.
+     */
+    if (
+      !root ||
+      root === document ||
+      root === document.documentElement ||
+      root === document.body
+    ) {
+      return candidates(host, selector);
+    }
+
+    if (root.nodeType !== 1 || !host.contains(root)) {
+      return [];
+    }
+
+    return candidates(root, selector);
+  }
+
   function scan(root) {
     root = root || document;
 
-    if (state.config.patch_ranges) {
-      var ranges = candidates(
+    if (erudaState.config.patch_ranges) {
+      var ranges = erudaCandidates(
         root,
         'input[type="range"]'
       );
@@ -1317,8 +1376,8 @@
       }
     }
 
-    if (state.config.patch_selects) {
-      var selects = candidates(root, 'select');
+    if (erudaState.config.patch_selects) {
+      var selects = erudaCandidates(root, 'select');
 
       for (var j = 0; j < selects.length; j++) {
         patchSelect(selects[j]);
@@ -1329,20 +1388,20 @@
   }
 
   function queueScan(root) {
-    if (state.scanQueued) return;
+    if (erudaState.scanQueued) return;
 
-    state.scanQueued = true;
+    erudaState.scanQueued = true;
 
     Promise.resolve().then(function () {
-      state.scanQueued = false;
+      erudaState.scanQueued = false;
       scan(root || document);
     });
   }
 
   function observe() {
-    if (state.observer) return;
+    if (erudaState.observer) return;
 
-    state.observer = new MutationObserver(function (records) {
+    erudaState.observer = new MutationObserver(function (records) {
       for (var i = 0; i < records.length; i++) {
         for (
           var j = 0;
@@ -1358,7 +1417,7 @@
       }
     });
 
-    state.observer.observe(document.documentElement, {
+    erudaState.observer.observe(document.documentElement, {
       childList: true,
       subtree: true
     });
@@ -1369,42 +1428,52 @@
     scan(document);
     observe();
 
-    console.info('[Incompatipatch] Eruda started.', {
-      source: state.config.eruda_source,
-      theme: state.config.theme,
-      display_size: state.config.display_size,
-      localStorageFallback: state.storage.localInstalled,
-      sessionStorageFallback: state.storage.sessionInstalled
+    console.info('[Sevrin Eruda] started.', {
+      source: erudaState.config.eruda_source,
+      theme: erudaState.config.theme,
+      display_size: erudaState.config.display_size,
+      localStorageFallback: incompatipatchState.storage.localInstalled,
+      sessionStorageFallback: incompatipatchState.storage.sessionInstalled
     });
   }
 
+  /*
+   * Public channels. Keep their names strict: callers looking for generic
+   * runtime repair should not receive Eruda lifecycle controls, and vice
+   * versa.
+   */
   global.SevrinIncompatipatch = {
-    version: '0.2',
-    config: CONFIG,
+    version: '0.3',
+    preflight: preflight,
+    storage: incompatipatchState.storage
+  };
+
+  global.SevrinEruda = {
+    version: '0.3',
+    config: ERUDA_CONFIG,
     boot: boot,
 
     refresh: function () {
       for (
         var i = 0;
-        i < state.patchedRanges.length;
+        i < erudaState.patchedRanges.length;
         i++
       ) {
-        state.patchedRanges[i].sync();
+        erudaState.patchedRanges[i].sync();
       }
 
       for (
         var j = 0;
-        j < state.patchedSelects.length;
+        j < erudaState.patchedSelects.length;
         j++
       ) {
-        state.patchedSelects[j].sync();
+        erudaState.patchedSelects[j].sync();
       }
 
       scan(document);
     },
 
-    closeMenus: closeOpenMenu,
-    storage: state.storage
+    closeMenus: closeOpenMenu
   };
 
   /*
@@ -1424,9 +1493,9 @@
 
 
 /*
- * IP-004 — Eruda console history + Tab completion
+ * ERUDA CHANNEL ADDENDUM — ER-004 console history + Tab completion
  *
- * Append this to incompatipatch-eruda.js after the main loader.
+ * This stays after the channel bootstrap in incompatipatch-eruda.js.
  *
  * Features:
  * - ArrowUp / ArrowDown history at first/last textarea line.
@@ -1441,13 +1510,13 @@
 (function (global, document) {
   'use strict';
 
-  var patch = global.SevrinIncompatipatch;
+  var eruda = global.SevrinEruda;
 
-  if (!patch || global.SevrinIncompatipatchConsoleExtras) {
+  if (!eruda || global.SevrinErudaConsoleExtras) {
     return;
   }
 
-  var config = patch.config || {};
+  var config = eruda.config || {};
 
   if (config.console_history_max === undefined) {
     config.console_history_max = 150;
@@ -2105,7 +2174,7 @@
     subtree: true
   });
 
-  global.SevrinIncompatipatchConsoleExtras = {
+  global.SevrinErudaConsoleExtras = {
     clearHistory: function () {
       state.history = [];
       state.cursor = 0;
@@ -2121,21 +2190,21 @@
 })(window, document);
 
 /* ------------------------------------------------------------
- * IP-003 + IP-005
- * Eruda Storage inspector bridge + selected-log Ctrl+C.
+ * ERUDA CHANNEL ADDENDUM — ER-003 + ER-005
+ * Storage inspector bridge + selected-log Ctrl+C.
  *
- * Append this whole block at the END of incompatipatch-eruda.js.
+ * This belongs at the END of the Eruda channel addendums.
  * ---------------------------------------------------------- */
 (function (global, document) {
   'use strict';
 
-  var patch = global.SevrinIncompatipatch;
+  var eruda = global.SevrinEruda;
 
-  if (!patch || global.SevrinIncompatipatchErudaAddendums) {
+  if (!eruda || global.SevrinErudaAddendums) {
     return;
   }
 
-  var config = patch.config || {};
+  var config = eruda.config || {};
 
   var state = {
     storageInstalled: false,
@@ -2444,7 +2513,7 @@
     state.attempts += 1;
 
     /*
-     * The main Incompatipatch dynamically injects Eruda, so this
+     * The main Eruda channel dynamically injects Eruda, so this
      * append block can arrive first. Four seconds is generous while
      * still failing honestly instead of polling forever.
      */
@@ -2454,11 +2523,11 @@
     }
 
     console.warn(
-      '[Incompatipatch] IP-003 storage bridge could not find Eruda Resources.'
+      '[Sevrin Eruda] ER-003 storage bridge could not find Eruda Resources.'
     );
   }
 
-  global.SevrinIncompatipatchErudaAddendums = {
+  global.SevrinErudaAddendums = {
     refreshStorage: function () {
       if (!installStorageBridge()) {
         return false;
@@ -2483,24 +2552,24 @@
 
 
 /*
- * IP-006 — Eruda legacy copy bridge, Servo edition
+ * ERUDA CHANNEL ADDENDUM — ER-006 legacy copy bridge, Servo edition
  *
  * Eruda/Licia creates an offscreen readonly textarea containing the
  * copy payload, then calls document.execCommand("copy").
  *
  * Servo does not expose that temporary selection as activeElement or
- * window.getSelection(), so we locate the temporary textarea itself
- * and send its value through navigator.clipboard.writeText().
+ * window.getSelection(), so we locate the temporary textarea itself and
+ * bridge only that known Licia path through navigator.clipboard.writeText().
  */
 (function (global, document) {
   'use strict';
 
-  var patch = global.SevrinIncompatipatch;
+  var eruda = global.SevrinEruda;
 
   if (
-    !patch ||
-    !patch.config ||
-    !patch.config.legacy_copy_bridge
+    !eruda ||
+    !eruda.config ||
+    !eruda.config.legacy_copy_bridge
   ) {
     return;
   }
@@ -2511,7 +2580,7 @@
     typeof document.execCommand !== 'function'
   ) {
     console.warn(
-      '[Incompatipatch] IP-006 unavailable: clipboard or execCommand missing.'
+      '[Sevrin Eruda] ER-006 unavailable: clipboard or execCommand missing.'
     );
     return;
   }
@@ -2545,47 +2614,6 @@
     return null;
   }
 
-  function selectedTextFallback() {
-    var active = document.activeElement;
-
-    if (
-      active &&
-      (active.tagName === 'TEXTAREA' ||
-        active.tagName === 'INPUT') &&
-      typeof active.selectionStart === 'number' &&
-      typeof active.selectionEnd === 'number'
-    ) {
-      var selected = active.value.slice(
-        active.selectionStart,
-        active.selectionEnd
-      );
-
-      if (selected) {
-        return {
-          text: selected,
-          source: 'active control selection'
-        };
-      }
-    }
-
-    if (global.getSelection) {
-      var selection = global.getSelection();
-      var text = selection ? String(selection) : '';
-
-      if (text) {
-        return {
-          text: text,
-          source: 'document selection'
-        };
-      }
-    }
-
-    return {
-      text: '',
-      source: 'none'
-    };
-  }
-
   document.execCommand = function (command) {
     var normalized = String(command || '').toLowerCase();
 
@@ -2594,33 +2622,31 @@
     }
 
     var copyBox = findLegacyCopyTextarea();
-    var payload;
 
-    if (copyBox) {
-      payload = {
-        text: String(copyBox.value || ''),
-        source: 'Licia offscreen textarea'
-      };
-    } else {
-      payload = selectedTextFallback();
+    /*
+     * This is an Eruda-channel bridge, not a replacement for every page's
+     * legacy Copy behavior. Only intercept Licia's known temporary-control
+     * shape; unrelated document.execCommand("copy") calls stay native.
+     */
+    if (!copyBox) {
+      return originalExecCommand.apply(document, arguments);
     }
+
+    var payload = {
+      text: String(copyBox.value || ''),
+      source: 'Licia offscreen textarea'
+    };
 
     if (!payload.text) {
       console.warn(
-        '[Incompatipatch] IP-006 intercepted copy but found no payload.',
-        {
-          activeTag:
-            document.activeElement &&
-            document.activeElement.tagName,
-          source: payload.source
-        }
+        '[Sevrin Eruda] ER-006 found an empty Licia copy textarea.'
       );
 
       return originalExecCommand.apply(document, arguments);
     }
 
     console.log(
-      '[Incompatipatch] IP-006 copying via Clipboard API:',
+      '[Sevrin Eruda] ER-006 copying via Clipboard API:',
       {
         source: payload.source,
         length: payload.text.length,
@@ -2636,12 +2662,12 @@
     navigator.clipboard.writeText(payload.text).then(
       function () {
         console.log(
-          '[Incompatipatch] IP-006 clipboard write resolved.'
+          '[Sevrin Eruda] ER-006 clipboard write resolved.'
         );
       },
       function (error) {
         console.error(
-          '[Incompatipatch] IP-006 clipboard write rejected:',
+          '[Sevrin Eruda] ER-006 clipboard write rejected:',
           error
         );
       }
@@ -2650,15 +2676,15 @@
     return true;
   };
 
-  global.SevrinIncompatipatchLegacyCopy = {
+  global.SevrinErudaLegacyCopy = {
     uninstall: function () {
       document.execCommand = originalExecCommand;
-      delete global.SevrinIncompatipatchLegacyCopy;
+      delete global.SevrinErudaLegacyCopy;
     }
   };
 
   console.info(
-    '[Incompatipatch] IP-006 legacy copy bridge installed.'
+    '[Sevrin Eruda] ER-006 legacy copy bridge installed.'
   );
 })(window, document);
 
