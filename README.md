@@ -1,75 +1,71 @@
 ```javascript
 /*
- * Servo Incompatipatch — self-booting Eruda host
- * v0.2 + field addendums
+ * Servo support bundle — Incompatipatch core + Eruda channel
+ * v0.3 + field addendums
  *
- * A page only needs:
+ * A page still needs only:
  *   <script src="./incompatipatch-eruda.js"></script>
  *
- * This file turns a stock local Eruda bundle into a Servo-friendly
- * local dev console. It owns the complete lifecycle:
+ * This remains one file because a stock local Eruda is not presently useful
+ * in Servo without its compatibility work. Internally, however, it is two
+ * deliberately separate channels:
  *
- *   1. preflight
- *      - tests localStorage/sessionStorage
- *      - installs enumerable RAM Storage fallbacks only when opaque
- *        file: origins cause native storage to throw
+ *   1. INCOMPATIPATCH CORE
+ *      Generic document-runtime compatibility, meaningful even without Eruda.
+ *      Today this is the opaque-file-origin Storage preflight.
  *
- *   2. load
- *      - dynamically loads CONFIG.eruda_source
- *      - starts Eruda with configured theme and display size
- *      - keeps the page-side installation to one script tag
+ *      Public surface:
+ *        window.SevrinIncompatipatch
+ *          .preflight()
+ *          .storage
  *
- *   3. postflight
- *      - repairs Eruda's unsupported `pointer-events: all` usage
- *      - watches later-created Eruda UI with MutationObserver
- *      - installs control and console compatibility addendums
+ *   2. ERUDA CHANNEL
+ *      Eruda loading, initialization, Eruda-only DOM/CSS prosthetics, and
+ *      Eruda-specific addendums. It is the only channel allowed to know
+ *      Eruda class names, internals, or quirks.
  *
- * Included incompatipatches
- * ------------------------
+ *      Public surface:
+ *        window.SevrinEruda
+ *          .config
+ *          .boot()
+ *          .refresh()
+ *          .closeMenus()
  *
- * IP-001 — native control fallbacks
- *   - replaces dead <input type="range"> behavior with a custom DOM slider
- *   - supports click, drag, keyboard stepping, Home/End, PageUp/PageDown
- *   - writes back to the original input and emits normal input/change events
- *   - replaces dead single-select popups with a custom DOM listbox
- *   - preserves the original select.value / selectedIndex contract
- *   - dispatches normal input/change events for existing Eruda listeners
+ * Boundary rule:
+ *   Put a repair in Incompatipatch only when it describes Servo's document
+ *   runtime independently of Eruda. Put a repair in the Eruda channel when
+ *   it touches #eruda, window.eruda, Eruda/Licia behavior, or an Eruda-owned
+ *   control. Do not make an Eruda defect look like a general engine feature.
+ *
+ * ERUDA CHANNEL CONTENTS
+ * ----------------------
+ *
+ * ER-001 — native control fallbacks
+ *   - replaces dead Eruda <input type="range"> behavior with a custom DOM
+ *     slider, including click, drag, keyboard stepping, Home/End, and pages
+ *   - replaces dead Eruda single-select popups with a custom DOM listbox
+ *   - preserves input/select values and dispatches normal input/change events
  *   - opens select menus upward when lower viewport space is insufficient
- *   - optionally marks patched controls with red diagnostic outlines
  *
- * IP-002 — console execution ergonomics
+ * ER-002 — console execution ergonomics
  *   - Ctrl+Enter / Cmd+Enter triggers Eruda's real Execute path
- *   - avoids dependence on Eruda's hidden/broken native action rail
  *
- * IP-003 — Storage inspector bridge
- *   - works around Eruda Resources using JSON.stringify(storage)
- *   - enumerates native Servo Storage honestly through:
+ * ER-003 — Storage inspector bridge
+ *   - replaces Eruda Resources' broken Storage JSON enumeration with:
  *       storage.length → storage.key(i) → storage.getItem(key)
- *   - makes ordinary app keys visible in Resources / Local Storage
  *   - can optionally reveal Eruda's own hidden eruda-* settings keys
  *
- * IP-004 — console history and completion
+ * ER-004 — console history and completion
  *   - ArrowUp / ArrowDown session command history at textarea edges
- *   - preserves ordinary multiline arrow behavior away from those edges
- *   - Tab completion for safe identifier/property chains
- *   - Shift+Tab cycles candidates backward
- *   - completion avoids eval: no calls, operators, bracket expressions,
- *     or arbitrary source execution
+ *   - Tab completion for safe identifier/property chains, without eval
  *
- * IP-005 — selected-log copy shortcut
- *   - Ctrl+C / Cmd+C activates Eruda's enabled Copy control when a
- *     structured console log is selected
- *   - never steals normal copy from textarea, input, contenteditable,
- *     or an ordinary document text selection
+ * ER-005 — selected-log copy shortcut
+ *   - Ctrl+C / Cmd+C activates Eruda's enabled Copy control for a selected log
+ *   - never steals normal copy from editable controls or real text selection
  *
- * IP-006 — legacy copy to modern clipboard bridge
- *   - Eruda/Licia uses document.execCommand("copy")
- *   - Servo reports legacy copy unsupported even though modern Clipboard API
- *     exists and navigator.clipboard.writeText() works
- *   - intercepts legacy copy only
- *   - reads Eruda/Licia's temporary offscreen copy textarea
- *   - routes its actual text through navigator.clipboard.writeText()
- *   - restores working toolbar Copy and selected-log Ctrl+C copying
+ * ER-006 — legacy copy to modern clipboard bridge
+ *   - routes Eruda/Licia's known temporary-copy payload through
+ *     navigator.clipboard.writeText(), leaving unrelated page copy native
  *
  * Known engine gaps still visible
  * -------------------------------
@@ -78,8 +74,10 @@
  *     rendered console text remains an engine issue.
  *   - text-overflow, resize, appearance, forced-colors and related CSS
  *     declarations may be ignored by current Servo builds.
- *   - native <select> and <input type="range"> behavior is supplied here
- *     as a temporary JavaScript prosthetic, not considered permanently fixed.
+ *   - native <select> and <input type="range"> behavior is supplied in the
+ *     Eruda channel as a temporary JavaScript prosthetic.
+ *   - Eruda's Network tab has little purpose in Servo's local/no-network
+ *     runtime model.
  *   - malformed table-like HTML may trigger html5ever's current
  *     "foster parenting not implemented" warning.
  *
