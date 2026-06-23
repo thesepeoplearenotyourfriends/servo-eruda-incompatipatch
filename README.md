@@ -76,8 +76,6 @@
  *     declarations may be ignored by current Servo builds.
  *   - native <select> and <input type="range"> behavior is supplied in the
  *     Eruda channel as a temporary JavaScript prosthetic.
- *   - Eruda's Network tab has little purpose in Servo's local/no-network
- *     runtime model.
  *   - malformed table-like HTML may trigger html5ever's current
  *     "foster parenting not implemented" warning.
  *
