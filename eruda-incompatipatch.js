@@ -1,12 +1,12 @@
 /*
- * Servo support bundle — Incompatipatch core + Eruda channel
+ * Severin support bundle — Incompatipatch core + Eruda channel
  * v0.3 + field addendums
  *
  * A page still needs only:
  *   <script src="./incompatipatch-eruda.js"></script>
  *
  * This remains one file because a stock local Eruda is not presently useful
- * in Servo without its compatibility work. Internally, however, it is two
+ * in Severin without its compatibility work. Internally, however, it is two
  * deliberately separate channels:
  *
  *   1. INCOMPATIPATCH CORE
@@ -31,7 +31,7 @@
  *          .closeMenus()
  *
  * Boundary rule:
- *   Put a repair in Incompatipatch only when it describes Servo's document
+ *   Put a repair in Incompatipatch only when it describes Severin's document
  *   runtime independently of Eruda. Put a repair in the Eruda channel when
  *   it touches #eruda, window.eruda, Eruda/Licia behavior, or an Eruda-owned
  *   control. Do not make an Eruda defect look like a general engine feature.
@@ -75,7 +75,7 @@
  *     declarations may be ignored by current Servo builds.
  *   - native <select> and <input type="range"> behavior is supplied in the
  *     Eruda channel as a temporary JavaScript prosthetic.
- *   - Eruda's Network tab has little purpose in Servo's local/no-network
+ *   - Eruda's Network tab has little purpose in Severin's local/no-network
  *     runtime model.
  *   - malformed table-like HTML may trigger html5ever's current
  *     "foster parenting not implemented" warning.
@@ -91,7 +91,7 @@
    * ERUDA CHANNEL CONFIG — edit this small block, not machinery.
    * ---------------------------------------------------------- */
   var ERUDA_CONFIG = {
-    eruda_source: '/mnt/library/servo/servo/eruda.js',
+    eruda_source: './eruda.js',
     theme: 'dark',
     display_size: '52',
     console_history_max: 150,
@@ -2552,14 +2552,25 @@
 
 
 /*
- * ERUDA CHANNEL ADDENDUM — ER-006 legacy copy bridge, Servo edition
+ * ERUDA CHANNEL ADDENDUM — ER-006 legacy copy bridge, route-aware
  *
- * Eruda/Licia creates an offscreen readonly textarea containing the
- * copy payload, then calls document.execCommand("copy").
+ * Eruda/Licia still speaks document.execCommand("copy").  Servo builds
+ * vary: some expose a usable Clipboard API, some expose only execCommand,
+ * and some may expose Clipboard API before execCommand exists.
  *
- * Servo does not expose that temporary selection as activeElement or
- * window.getSelection(), so we locate the temporary textarea itself and
- * bridge only that known Licia path through navigator.clipboard.writeText().
+ * Install whenever at least one route exists:
+ *
+ *   Clipboard API present + payload found
+ *     → write through navigator.clipboard.writeText().
+ *
+ *   Native execCommand present but Clipboard API absent
+ *     → preserve and use the native legacy route.
+ *
+ *   Clipboard API present but execCommand absent
+ *     → provide a copy-only execCommand shim for Licia.
+ *
+ *   Neither route present
+ *     → report honestly and do nothing.
  */
 (function (global, document) {
   'use strict';
@@ -2574,18 +2585,33 @@
     return;
   }
 
-  if (
-    !navigator.clipboard ||
-    typeof navigator.clipboard.writeText !== 'function' ||
-    typeof document.execCommand !== 'function'
-  ) {
+  var originalExecCommand =
+    typeof document.execCommand === 'function'
+      ? document.execCommand.bind(document)
+      : null;
+
+  var clipboard =
+    global.navigator &&
+    global.navigator.clipboard &&
+    typeof global.navigator.clipboard.writeText ===
+      'function'
+      ? global.navigator.clipboard
+      : null;
+
+  if (!clipboard && !originalExecCommand) {
     console.warn(
-      '[Sevrin Eruda] ER-006 unavailable: clipboard or execCommand missing.'
+      '[Sevrin Eruda] ER-006 unavailable: neither Clipboard API nor execCommand exists.'
     );
     return;
   }
 
-  var originalExecCommand = document.execCommand.bind(document);
+  function nativeExecCommand(args) {
+    if (!originalExecCommand) {
+      return false;
+    }
+
+    return originalExecCommand.apply(document, args);
+  }
 
   function findLegacyCopyTextarea() {
     var controls = document.querySelectorAll(
@@ -2614,37 +2640,66 @@
     return null;
   }
 
-  document.execCommand = function (command) {
-    var normalized = String(command || '').toLowerCase();
+  /*
+   * This was present before the cleanup. It matters whenever Licia's exact
+   * temporary textarea shape changes, or Servo exposes the selection through
+   * another path instead.
+   */
+  function selectedTextFallback() {
+    var active = document.activeElement;
 
-    if (normalized !== 'copy') {
-      return originalExecCommand.apply(document, arguments);
-    }
-
-    var copyBox = findLegacyCopyTextarea();
-
-    /*
-     * This is an Eruda-channel bridge, not a replacement for every page's
-     * legacy Copy behavior. Only intercept Licia's known temporary-control
-     * shape; unrelated document.execCommand("copy") calls stay native.
-     */
-    if (!copyBox) {
-      return originalExecCommand.apply(document, arguments);
-    }
-
-    var payload = {
-      text: String(copyBox.value || ''),
-      source: 'Licia offscreen textarea'
-    };
-
-    if (!payload.text) {
-      console.warn(
-        '[Sevrin Eruda] ER-006 found an empty Licia copy textarea.'
+    if (
+      active &&
+      (active.tagName === 'TEXTAREA' ||
+        active.tagName === 'INPUT') &&
+      typeof active.selectionStart === 'number' &&
+      typeof active.selectionEnd === 'number'
+    ) {
+      var selected = active.value.slice(
+        active.selectionStart,
+        active.selectionEnd
       );
 
-      return originalExecCommand.apply(document, arguments);
+      if (selected) {
+        return {
+          text: selected,
+          source: 'active control selection'
+        };
+      }
     }
 
+    if (global.getSelection) {
+      var selection = global.getSelection();
+      var text = selection ? String(selection) : '';
+
+      if (text) {
+        return {
+          text: text,
+          source: 'document selection'
+        };
+      }
+    }
+
+    return {
+      text: '',
+      source: 'none'
+    };
+  }
+
+  function copyPayload() {
+    var copyBox = findLegacyCopyTextarea();
+
+    if (copyBox) {
+      return {
+        text: String(copyBox.value || ''),
+        source: 'Licia offscreen textarea'
+      };
+    }
+
+    return selectedTextFallback();
+  }
+
+  function writeClipboard(payload) {
     console.log(
       '[Sevrin Eruda] ER-006 copying via Clipboard API:',
       {
@@ -2655,11 +2710,10 @@
     );
 
     /*
-     * Start this immediately inside Eruda's click / Ctrl+C gesture.
-     * The returned promise cannot be awaited by old execCommand callers,
-     * so true means “accepted for modern clipboard delivery.”
+     * Start immediately inside the original Eruda gesture. Legacy callers
+     * cannot await this promise, so true means the modern route accepted it.
      */
-    navigator.clipboard.writeText(payload.text).then(
+    clipboard.writeText(payload.text).then(
       function () {
         console.log(
           '[Sevrin Eruda] ER-006 clipboard write resolved.'
@@ -2674,18 +2728,98 @@
     );
 
     return true;
-  };
+  }
+
+  function routeCopy(args) {
+    var payload = copyPayload();
+
+    /*
+     * Prefer the modern path whenever it exists and we found actual text.
+     */
+    if (clipboard && payload.text) {
+      return writeClipboard(payload);
+    }
+
+    /*
+     * No Clipboard API, or no recognizable payload: do not veto the old
+     * route. Let native execCommand attempt ordinary copy unchanged.
+     */
+    if (originalExecCommand) {
+      if (!clipboard && payload.text) {
+        console.info(
+          '[Sevrin Eruda] ER-006 using native execCommand copy:',
+          {
+            source: payload.source,
+            length: payload.text.length
+          }
+        );
+      }
+
+      return nativeExecCommand(args);
+    }
+
+    /*
+     * Clipboard-only mode without recognizable text. There is no native
+     * fallback and nothing safe to write.
+     */
+    console.warn(
+      '[Sevrin Eruda] ER-006 copy requested but no payload was found.',
+      {
+        source: payload.source,
+        clipboard: !!clipboard,
+        nativeExecCommand: !!originalExecCommand
+      }
+    );
+
+    return false;
+  }
+
+  try {
+    document.execCommand = function (command) {
+      var normalized = String(command || '').toLowerCase();
+
+      if (normalized !== 'copy') {
+        return nativeExecCommand(arguments);
+      }
+
+      return routeCopy(arguments);
+    };
+  } catch (error) {
+    console.warn(
+      '[Sevrin Eruda] ER-006 could not install execCommand route:',
+      error
+    );
+    return;
+  }
+
+  if (typeof document.execCommand !== 'function') {
+    console.warn(
+      '[Sevrin Eruda] ER-006 could not expose its execCommand route.'
+    );
+    return;
+  }
 
   global.SevrinErudaLegacyCopy = {
     uninstall: function () {
-      document.execCommand = originalExecCommand;
+      if (originalExecCommand) {
+        document.execCommand = originalExecCommand;
+      } else {
+        try {
+          delete document.execCommand;
+        } catch (error) {
+          document.execCommand = undefined;
+        }
+      }
+
       delete global.SevrinErudaLegacyCopy;
     }
   };
 
   console.info(
-    '[Sevrin Eruda] ER-006 legacy copy bridge installed.'
+    '[Sevrin Eruda] ER-006 route-aware copy bridge installed.',
+    {
+      clipboard: !!clipboard,
+      nativeExecCommand: !!originalExecCommand
+    }
   );
 })(window, document);
-
-
